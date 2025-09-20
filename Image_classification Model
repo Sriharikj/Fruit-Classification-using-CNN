@@ -1,0 +1,102 @@
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras import layers, Model
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras.optimizers import Adam
+
+train_dir = r"/content/sample_data/train"
+val_dir   = r"/content/sample_data/test"
+
+IMG_SIZE = (224, 224)
+BATCH_SIZE = 32
+
+train_datagen = ImageDataGenerator(
+    rescale=1./255,
+    rotation_range=20,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    shear_range=0.2,
+    zoom_range=0.2,
+    horizontal_flip=True,
+    fill_mode="nearest"
+)
+
+val_datagen = ImageDataGenerator(rescale=1./255)
+
+train_generator = train_datagen.flow_from_directory(
+    train_dir,
+    target_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    class_mode="sparse"
+)
+
+valid_generator = val_datagen.flow_from_directory(
+    val_dir,
+    target_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    class_mode="sparse"
+)
+
+esnet_base = ResNet50(include_top=False, weights="imagenet", input_shape=(224, 224, 3))
+
+# Freeze base model layers
+for layer in resnet_base.layers:
+    layer.trainable = False
+
+# Custom classification head
+x = resnet_base.output
+x = layers.GlobalAveragePooling2D()(x)
+x = layers.Dense(512, activation="relu")(x)
+x = layers.Dropout(0.5)(x)
+x = layers.Dense(256, activation="relu")(x)
+x = layers.Dropout(0.5)(x)
+x = layers.Dense(128, activation="relu")(x)
+x = layers.Dropout(0.5)(x)
+x = layers.Dense(64, activation="relu")(x)
+x = layers.Dropout(0.5)(x)
+predictions = layers.Dense(train_generator.num_classes, activation="softmax")(x)
+
+model = Model(inputs=resnet_base.input, outputs=predictions)
+
+model.compile(optimizer=Adam(learning_rate=0.0001),
+              loss="sparse_categorical_crossentropy",
+              metrics=["accuracy"])
+
+history = model.fit(
+    train_generator,
+    validation_data=valid_generator,
+    epochs=10
+)
+
+plt.plot(history.history["loss"], label="Train Loss")
+plt.plot(history.history["val_loss"], label="Val Loss")
+plt.legend(loc="upper right")
+plt.title("Loss Curve")
+plt.show()
+
+plt.plot(history.history["accuracy"], label="Train Acc")
+plt.plot(history.history["val_accuracy"], label="Val Acc")
+plt.legend(loc="lower right")
+plt.title("Accuracy Curve")
+plt.show()
+
+test_loss, test_acc = model.evaluate(valid_generator)
+print("Validation Loss:", test_loss)
+print("Validation Accuracy:", test_acc * 100)
+
+img_path = r"/content/sample_data/train/unripe/01J73SDWZ40ZVRVHY8HZ7H1F72-HD.png"
+img = tf.keras.preprocessing.image.load_img(img_path, target_size=(224, 224))
+img_array = tf.keras.preprocessing.image.img_to_array(img) / 255.0
+img_array = np.expand_dims(img_array, axis=0)
+
+predictions = model.predict(img_array)
+class_id = np.argmax(predictions, axis=1)[0]
+
+class_labels = list(train_generator.class_indices.keys())
+print("Predicted Class:", class_labels[class_id])
+
+# Save the entire model as a Keras model file
+model.save('image_classification_model.keras')
